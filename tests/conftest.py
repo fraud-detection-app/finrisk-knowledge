@@ -4,12 +4,42 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 from botocore.exceptions import ClientError
 
 from ingest.embeddings import TITAN_DIMS, TITAN_MODEL_ID, HashEmbedder
+
+ROOT = Path(__file__).resolve().parents[1]
+
+# Folders that tools generate (or that hold git's own bookkeeping). A scan of "what is committed" must never read them:
+# on a CI runner .git/ holds fetched refs and shas; .venv/ holds other people's code; build/ holds the indexes the
+# workflow just made; _main/ is the checkout of main the pull-request check compares against.
+GENERATED_DIRS = {".git", ".venv", "venv", "__pycache__", ".pytest_cache", "build", "_main"}
+
+
+def repo_files(root: Path = ROOT) -> list[Path]:
+    """The files of the repository that git tracks (or would track): `git ls-files` when `root` is a git checkout and git
+    is installed, otherwise a walk of the folder that does not enter GENERATED_DIRS or another checkout nested inside
+    it. Either way nothing from a generated folder, and never a .pyc."""
+    names: list[Path] | None = None
+    if (root / ".git").exists() and shutil.which("git"):
+        done = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+                              capture_output=True, text=True)
+        if done.returncode == 0:
+            names = [root / n for n in done.stdout.split("\0") if n]
+    if names is None:
+        names = []
+        for folder, dirs, files in os.walk(root):
+            dirs[:] = [d for d in dirs if d not in GENERATED_DIRS and not (Path(folder) / d / ".git").exists()]   # prune
+            names.extend(Path(folder) / f for f in files)
+    return sorted(p for p in names if p.is_file() and p.suffix != ".pyc"
+                  and not GENERATED_DIRS.intersection(p.relative_to(root).parts))
+
 
 FRONT = "---\ntitle: {title}\nowner: Compliance\neffective: 2026-10-16\n---\n\n"
 

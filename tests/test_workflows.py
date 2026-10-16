@@ -12,6 +12,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.conftest import GENERATED_DIRS, repo_files
+
 ROOT = Path(__file__).resolve().parents[1]
 WF = ROOT / ".github" / "workflows"
 NAMES = ("kb-ci", "ingest", "promote-index")
@@ -211,7 +213,29 @@ def test_the_secrets_table_is_at_the_top_of_ingest_yml():
         assert name in head
 
 
+ACCOUNT_ID = re.compile(r"(?<!\d)\d{12}(?!\d)")
+LONG_HEX = re.compile(r"[0-9a-f]{32,}")             # a digest or a commit sha can contain 12 digits in a row
+
+
+def account_ids(root=ROOT):
+    return [path.relative_to(root).as_posix() for path in repo_files(root)
+            if path.suffix in {".md", ".yml", ".yaml", ".py", ".txt", ".toml", ".json"}
+            and ACCOUNT_ID.search(LONG_HEX.sub("", path.read_text(errors="ignore")))]
+
+
 def test_no_twelve_digit_account_id_anywhere_in_the_repo():
-    for path in ROOT.rglob("*"):
-        if path.is_file() and path.suffix in {".md", ".yml", ".yaml", ".py", ".txt", ".toml", ".json"} and ".pytest_cache" not in str(path):
-            assert not re.search(r"(?<!\d)\d{12}(?!\d)", path.read_text(errors="ignore")), path
+    """Only files git tracks (or would) are scanned: not .git/ (a runner's .git holds fetched refs), .venv/, build/ or _main/."""
+    assert account_ids() == []
+
+
+def test_the_scan_ignores_generated_folders_and_digests_but_still_sees_a_leak(tmp_path):
+    fake = "123456" + "789012"                          # written in two pieces: this file is scanned too
+    for folder in sorted(GENERATED_DIRS):
+        (tmp_path / folder).mkdir()
+        (tmp_path / folder / "manifest.json").write_text('{"account": "%s"}\n' % fake)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "ok.md").write_text("digest sha256:ab" + fake + "cd" + "e" * 48 + "\n")        # 12 digits inside a digest
+    assert account_ids(tmp_path) == []
+    assert [p.name for p in repo_files(tmp_path)] == ["ok.md"]
+    (tmp_path / "docs" / "leak.md").write_text(f"role arn:aws:iam::{fake}:role/x\n")
+    assert account_ids(tmp_path) == ["docs/leak.md"]
