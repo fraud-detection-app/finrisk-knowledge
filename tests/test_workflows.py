@@ -70,7 +70,7 @@ def test_every_job_runs_on_the_pinned_runner_image(name):
 
 def test_kb_ci_is_the_required_check_and_needs_no_aws():
     wf = load("kb-ci")
-    assert set(wf["on"]) == {"pull_request", "push"} and wf["on"]["push"]["branches"] == ["main"]
+    assert set(wf["on"]) == {"pull_request"}   # PRs only: the ruleset makes them up to date with main
     assert list(wf["jobs"]) == ["kb-check"]
     text = (WF / "kb-ci.yml").read_text()
     assert "secrets." not in text and "id-token" not in text and "configure-aws-credentials" not in text
